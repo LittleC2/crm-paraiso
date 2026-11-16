@@ -145,6 +145,17 @@
 		</ul>
 	</section>
 
+	<section class="card box">
+		<h2>Excluir lead</h2>
+		<details>
+			<summary class="dim">Apagar este lead do CRM</summary>
+			<form method="POST" action="?/excluir" use:enhance class="row lose">
+				<p class="dim grow">O lead e o histórico dele no funil são apagados e não voltam. O contato e as conversas de WhatsApp continuam.</p>
+				<button class="btn-danger" type="submit">Excluir definitivamente</button>
+			</form>
+		</details>
+	</section>
+
 	{#if d.tasks.length}
 		<section class="card box">
 			<h2>Tarefas</h2>

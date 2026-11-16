@@ -1,5 +1,5 @@
 // Carregamento e ações compartilhados entre /funil (JARDIM) e /pedidos (LOJA).
-import { error, fail } from '@sveltejs/kit';
+import { error, fail, redirect } from '@sveltejs/kit';
 import { db } from './db.js';
 import { isAdmin } from './access.js';
 import { CARD_FIELDS, normalizePrefs } from '../boardPrefs.js';
@@ -8,6 +8,8 @@ import {
 	assignToMe,
 	boardAllowed,
 	createDeal,
+	deleteDeal,
+	deleteDealsInStage,
 	loadBoard,
 	loadDeal,
 	loseDeal,
@@ -64,6 +66,10 @@ export function boardActions(area) {
 			await db.user.update({ where: { id: locals.user.id }, data: { boardPrefs: prefs } });
 			return { ok: true };
 		},
+		excluirEtapa: async ({ request, locals }) => {
+			const form = await request.formData();
+			return respond(await deleteDealsInStage(locals.user, String(form.get('stageId'))));
+		},
 		posicionar: async ({ request, locals }) => {
 			const form = await request.formData();
 			return respond(await placeDeals(locals.user, String(form.get('stageId')), form.getAll('dealIds').map(String)));
@@ -107,6 +113,11 @@ export const detailActions = {
 	perder: async ({ request, params, locals }) => {
 		const form = await request.formData();
 		return respond(await loseDeal(locals.user, params.id, String(form.get('reason')), form.get('note')));
+	},
+	excluir: async ({ params, locals }) => {
+		const r = await deleteDeal(locals.user, params.id);
+		if (r.error) return respond(r);
+		throw redirect(303, r.area === 'JARDIM' ? '/funil' : '/pedidos');
 	},
 	assumir: async ({ params, locals }) => respond(await assignToMe(locals.user, params.id)),
 	nota: async ({ request, params, locals }) => {

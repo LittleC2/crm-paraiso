@@ -9,6 +9,7 @@
 	import EllipsisVertical from '@lucide/svelte/icons/ellipsis-vertical';
 	import Search from '@lucide/svelte/icons/search';
 	import Settings from '@lucide/svelte/icons/settings';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
 	import { formatBRL } from '$lib/money.js';
 	import { waLink } from '$lib/phone.js';
 	import { callAction } from '$lib/formAction.js';
@@ -258,6 +259,15 @@
 	}
 	let prefsOpen = $state(false);
 	const show = (key) => data.prefs[key];
+
+	async function clearStage(stage) {
+		const n = data.deals.filter((d) => d.stageId === stage.id).length;
+		const ok = confirm(`Excluir ${n} lead(s) da etapa "${stage.name}"? Isso não pode ser desfeito. Contatos e conversas continuam.`);
+		if (!ok) return;
+		const r = await callAction('?/excluirEtapa', { stageId: stage.id });
+		if (!r.ok) notice = r.error ?? 'Não foi possível excluir.';
+		await invalidateAll();
+	}
 </script>
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && ((menuId = null), (loss = null), (prefsOpen = false))} />
@@ -328,6 +338,9 @@
 				<span class="dot"></span>
 				<span class="stage-name">{stage.name}</span>
 				<span class="count">{columns[stage.id]?.length ?? 0}</span>
+				{#if data.canConfig && (columns[stage.id]?.length ?? 0) > 0}
+					<button class="clear" type="button" title="Excluir todos os leads desta etapa" aria-label="Excluir todos os leads de {stage.name}" onclick={() => clearStage(stage)}><Trash2 size={14} /></button>
+				{/if}
 			</h2>
 			<p class="column-sum">{sum(columns[stage.id] ?? []) ? formatBRL(sum(columns[stage.id])) : ' '}</p>
 			<div
@@ -562,6 +575,8 @@
 	.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(250px, 1fr); gap: 0.8rem; overflow-x: auto; padding-bottom: 0.5rem; align-items: stretch; min-height: 60vh; }
 	.column { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
 	.column-head { margin: 0; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; display: flex; align-items: center; gap: 0.45rem; padding: 0.4rem 0.2rem; border-bottom: 3px solid var(--stage); color: var(--color-text-dim); }
+	.clear { background: none; border: 0; color: var(--color-text-dim); cursor: pointer; padding: 0.25rem; border-radius: var(--radius-button); display: inline-flex; }
+	.clear:hover { color: var(--color-danger); background: rgba(194, 54, 43, 0.1); }
 	.stage-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.dot { width: 0.65rem; height: 0.65rem; border-radius: 50%; background: var(--stage); flex: none; }
 	.dot.small { width: 0.5rem; height: 0.5rem; margin-right: 0.4rem; display: inline-block; }

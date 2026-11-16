@@ -189,6 +189,20 @@ ok(!(await db.contact.findFirst({ where: { tags: { has: 'teste-planilha' } } }))
 const novaChave = await act('/ajustes?/leadChave', adm.cookie, { id: integ.id });
 ok(novaChave.status === 200 && (await post([{ row: 30, data: { Nome: 'Z', WhatsApp: '21955554444' } }])).status === 401, 'gerar nova chave invalida a antiga');
 
+// ---- exclusão de leads -------------------------------------------------------------------
+const anaDeal = await db.deal.findFirst({ where: { contact: { phone: '5521988881111' } } });
+const ex = await (await act(`/funil/${anaDeal.id}?/excluir`, adm.cookie, {})).json();
+ok(ex.type === 'redirect' && ex.location === '/funil' && !(await db.deal.findUnique({ where: { id: anaDeal.id } })), 'excluir lead: apaga e redireciona');
+ok(Boolean(await db.contact.findFirst({ where: { phone: '5521988881111' } })), 'excluir lead: o contato continua');
+ok((await (await act(`/funil/${anaDeal.id}?/excluir`, adm.cookie, {})).json()).type === 'failure', 'excluir lead inexistente: 404');
+const st = await db.pipelineStage.findFirst({ where: { area: 'JARDIM', kind: 'ABERTA' }, orderBy: { order: 'asc' } });
+const cA = await db.contact.create({ data: { name: 'Lote A', phone: '5521933330001', area: 'JARDIM', type: 'CLIENTE_JARDIM' } });
+const cB = await db.contact.create({ data: { name: 'Lote B', phone: '5521933330002', area: 'JARDIM', type: 'CLIENTE_JARDIM' } });
+for (const c of [cA, cB]) await db.deal.create({ data: { area: 'JARDIM', contactId: c.id, stageId: st.id } });
+const before = await db.deal.count({ where: { stageId: st.id } });
+await act('/funil?/excluirEtapa', adm.cookie, { stageId: st.id });
+ok(before >= 2 && (await db.deal.count({ where: { stageId: st.id } })) === 0, 'esvaziar etapa: apaga todos os leads da etapa');
+
 fake.close();
 await db.$disconnect();
 console.log(fails ? `\n${fails} FALHA(S)` : '\nTODOS OS TESTES PASSARAM');

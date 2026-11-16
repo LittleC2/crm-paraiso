@@ -286,6 +286,30 @@ export async function assignToMe(user, id) {
 	return count ? { ok: true } : { error: 'Negócio não encontrado.' };
 }
 
+// ---- exclusão -------------------------------------------------------------
+
+// Apaga só o lead. O contato, as conversas e as notas dele continuam; as
+// tarefas automáticas ainda abertas do lead somem junto.
+async function removeDeals(deals) {
+	for (const d of deals) await cancelAutoTasks(d.id);
+	const { count } = await db.deal.deleteMany({ where: { id: { in: deals.map((d) => d.id) } } });
+	return count;
+}
+
+export async function deleteDeal(user, id) {
+	const deal = await db.deal.findFirst({ where: { id, ...dealScope(user) }, select: { id: true, area: true } });
+	if (!deal) return { error: 'Negócio não encontrado.', notFound: true };
+	await removeDeals([deal]);
+	return { ok: true, area: deal.area };
+}
+
+/** Esvazia uma etapa do quadro (só administrador). */
+export async function deleteDealsInStage(user, stageId) {
+	if (!isAdmin(user)) return { error: 'Sem permissão.' };
+	const deals = await db.deal.findMany({ where: { stageId, ...dealScope(user) }, select: { id: true } });
+	return { ok: true, count: await removeDeals(deals) };
+}
+
 // ---- histórico ------------------------------------------------------------
 
 export async function addInteraction(user, id, kind, body) {
