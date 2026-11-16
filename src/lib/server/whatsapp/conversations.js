@@ -6,7 +6,7 @@ import { allowedArea, can, contactScope, conversationScope, isAdmin } from '../a
 import { createContact } from '../contacts.js';
 import { normalizePhone } from '../../phone.js';
 import { createDeal } from '../deals.js';
-import { signedUrl } from '../storage.js';
+import { removeObject, signedUrl, storageConfigured } from '../storage.js';
 import { getProvider } from './provider.js';
 import { notifyConversation } from './notify.js';
 
@@ -264,6 +264,24 @@ export async function setConversationStatus(user, id, status) {
 	if (!['ABERTA', 'PENDENTE', 'FECHADA'].includes(status)) return { error: 'Status inválido.' };
 	const { count } = await db.whatsappConversation.updateMany({ where: { id, ...conversationScope(user) }, data: { status } });
 	return count ? { ok: true } : { error: 'Conversa não encontrada.', notFound: true };
+}
+
+/**
+ * Apaga a conversa e as mensagens (as mídias saem do Storage). O contato, o lead e as
+ * notas do perfil continuam. Nova mensagem do cliente abre uma conversa nova.
+ */
+export async function deleteConversation(user, id) {
+	const conv = await db.whatsappConversation.findFirst({
+		where: { id, ...conversationScope(user) },
+		select: { id: true, messages: { where: { mediaPath: { not: null } }, select: { mediaPath: true } } }
+	});
+	if (!conv) return { error: 'Conversa não encontrada.', notFound: true };
+	await db.whatsappConversation.delete({ where: { id: conv.id } });
+	if (storageConfigured()) {
+		// Arquivo órfão não atrapalha; a conversa já foi apagada.
+		await Promise.allSettled(conv.messages.map((m) => removeObject(m.mediaPath)));
+	}
+	return { ok: true };
 }
 
 /** Cria negócio a partir da conversa (pedido na loja, lead no jardim). Reaproveita o aberto, se houver. */

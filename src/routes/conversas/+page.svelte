@@ -153,6 +153,16 @@
 						</form>
 					{/if}
 					<a class="btn btn-secondary btn-sm" href={resolve(`/contatos/${c.contact.id}`)}>Contato</a>
+					<form
+						method="POST"
+						action="?/apagar"
+						use:enhance={({ cancel }) => {
+							if (!confirm(`Apagar a conversa com ${c.contact.name}? As mensagens e arquivos somem e isso não pode ser desfeito. O contato e o lead continuam.`)) cancel();
+						}}
+					>
+						<input type="hidden" name="id" value={c.id} />
+						<button class="btn btn-danger btn-sm" type="submit">Apagar conversa</button>
+					</form>
 				</div>
 			</header>
 

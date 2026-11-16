@@ -203,6 +203,14 @@ const before = await db.deal.count({ where: { stageId: st.id } });
 await act('/funil?/excluirEtapa', adm.cookie, { stageId: st.id });
 ok(before >= 2 && (await db.deal.count({ where: { stageId: st.id } })) === 0, 'esvaziar etapa: apaga todos os leads da etapa');
 
+// ---- apagar conversa -----------------------------------------------------------------------
+const convDel = await db.whatsappConversation.findFirst({ include: { contact: true } });
+const msgsAntes = await db.whatsappMessage.count({ where: { conversationId: convDel.id } });
+const dl = await (await act('/conversas?/apagar', adm.cookie, { id: convDel.id })).json();
+ok(msgsAntes > 0 && dl.type === 'redirect' && !(await db.whatsappConversation.findUnique({ where: { id: convDel.id } })) && (await db.whatsappMessage.count({ where: { conversationId: convDel.id } })) === 0, 'apagar conversa: some a conversa e as mensagens');
+ok(Boolean(await db.contact.findUnique({ where: { id: convDel.contactId } })), 'apagar conversa: o contato continua');
+ok((await (await act('/conversas?/apagar', adm.cookie, { id: convDel.id })).json()).type === 'failure', 'apagar conversa inexistente: erro');
+
 fake.close();
 await db.$disconnect();
 console.log(fails ? `\n${fails} FALHA(S)` : '\nTODOS OS TESTES PASSARAM');

@@ -8,6 +8,7 @@ import {
 	addNote,
 	assignConversation,
 	dealFromConversation,
+	deleteConversation,
 	listConversations,
 	listQuickReplies,
 	openConversation,
@@ -67,6 +68,11 @@ const respond = (r, ok = { ok: true }) => (r?.error ? fail(r.notFound ? 404 : 40
 const field = (form, name) => String(form.get(name) ?? '');
 
 export const actions = {
+	apagar: async ({ request, locals }) => {
+		const result = await deleteConversation(locals.user, field(await request.formData(), 'id'));
+		if (result.error) return fail(result.notFound ? 404 : 400, { error: result.error });
+		throw redirect(303, '/conversas');
+	},
 	enviar: async ({ request, locals }) => {
 		const form = await request.formData();
 		return respond(await sendMessage(locals.user, field(form, 'id'), form.get('text')), { sent: true });
