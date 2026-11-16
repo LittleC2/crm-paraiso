@@ -1,0 +1,728 @@
+// Schema do CRM Paraíso das Plantas (Fase 0 e Fase 1: base, tarefas, agenda).
+// Funil de jardim (Deal, PipelineStage...) e WhatsApp entram nas Fases 2 e 3,
+// em migrations novas. Nunca editar uma migration já aplicada.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// --- Enums compartilhados -----------------------------------------------
+
+// ADMIN = equipe interna (João, Eduardo). LOJA = equipe externa (funcionários
+// das lojas). O escopo de cada papel é aplicado no servidor (ver
+// src/lib/server/access.js).
+enum Role {
+  ADMIN
+  LOJA
+}
+
+// Cada contato, tarefa, evento e (depois) conversa pertence a uma área.
+enum Area {
+  LOJA
+  JARDIM
+}
+
+enum Recurrence {
+  NENHUMA
+  DIARIA
+  SEMANAL
+  MENSAL
+}
+
+// --- Auth ---------------------------------------------------------------
+
+model User {
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  name               String
+  passwordHash       String
+  role               Role     @default(LOJA)
+  active             Boolean  @default(true)
+  phone              String?
+  // Senha temporária definida pelo admin: obriga a trocar no primeiro acesso.
+  mustChangePassword Boolean  @default(false)
+  // Preferências do quadro de leads (campos visíveis no cartão).
+  boardPrefs         Json?
+  createdAt          DateTime @default(now())
+
+  sessions                 Session[]
+  pushSubscriptions        PushSubscription[]
+  assignedTasks            Task[]                    @relation("TaskAssignee")
+  reminders                Reminder[]
+  events                   Event[]                   @relation("EventParticipants")
+  assignedDeals            Deal[]                    @relation("DealAssignee")
+  conversations            WhatsappConversation[]    @relation("ConversationAssignee")
+  interactions             Interaction[]
+  googleCalendarConnection GoogleCalendarConnection?
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// Tentativas de login por hash de e-mail + IP (nunca o IP puro). Guardadas
+// no banco porque limitador em memória reseta a cada instância serverless.
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  keyHash   String
+  createdAt DateTime @default(now())
+
+  @@index([keyHash, createdAt])
+}
+
+// --- Lojas ----------------------------------------------------------------
+
+model Store {
+  id       String  @id @default(cuid())
+  name     String  @unique
+  whatsapp String?
+  address  String?
+  active   Boolean @default(true)
+}
+
+// --- Base de dados: contatos ----------------------------------------------
+
+enum ContactType {
+  CLIENTE_LOJA
+  CLIENTE_JARDIM
+  PARCEIRO
+  FORNECEDOR
+}
+
+model Contact {
+  id            String      @id @default(cuid())
+  name          String
+  phone         String?
+  email         String?
+  area          Area
+  type          ContactType
+  neighborhood  String?
+  city          String?
+  source        String?
+  tags          String[]
+  notes         String?
+  optInWhatsapp Boolean     @default(false)
+  createdById   String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  tasks           Task[]
+  reminders       Reminder[]
+  events          Event[]
+  deals           Deal[]
+  interactions    Interaction[]
+  contracts       MaintenanceContract[]
+  conversations   WhatsappConversation[]
+  historyRequests HistoryRequest[]
+
+  @@index([area])
+  @@index([phone])
+}
+
+// --- Tarefas ----------------------------------------------------------------
+
+enum TaskStatus {
+  A_FAZER
+  FAZENDO
+  BLOQUEADO
+  FEITO
+}
+
+enum TaskPriority {
+  BAIXA
+  NORMAL
+  ALTA
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  title       String
+  description String?
+  status      TaskStatus   @default(A_FAZER)
+  priority    TaskPriority @default(NORMAL)
+  area        Area         @default(LOJA)
+  // Posição de arrasto dentro da coluna (só comparável entre tarefas do
+  // mesmo status) — ver src/lib/server/tasks.js#reorderColumn.
+  order       Int          @default(0)
+  // Rotina (ex: checklist diário de Stories). Ao concluir, a próxima
+  // ocorrência é criada (ver tasks.js#setTaskStatus).
+  recurrence  Recurrence   @default(NENHUMA)
+
+  assigneeId String?
+  assignee   User?   @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  dueDate       DateTime?
+  // Id do evento correspondente na Google Agenda do responsável, se
+  // sincronizado — ver src/lib/server/googleCalendar.js.
+  googleEventId String?
+
+  dealId String?
+  deal   Deal?   @relation(fields: [dealId], references: [id], onDelete: SetNull)
+
+  // Chave de idempotência das tarefas criadas por automação (ex: retorno de
+  // proposta). Única: a mesma regra nunca cria a mesma tarefa duas vezes.
+  autoKey String? @unique
+
+  reminders Reminder[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  @@index([status])
+  @@index([contactId])
+  @@index([assigneeId])
+  @@index([area])
+}
+
+// --- Agenda -----------------------------------------------------------------
+
+enum EventType {
+  ENTREGA
+  REUNIAO
+  EVENTO
+  VIAGEM
+  VISITA
+  WORKSHOP
+  OUTRO
+}
+
+model Event {
+  id          String     @id @default(cuid())
+  title       String
+  description String?
+  type        EventType  @default(OUTRO)
+  area        Area       @default(LOJA)
+  startsAt    DateTime
+  endsAt      DateTime?
+  allDay      Boolean    @default(false)
+  location    String?
+  recurrence  Recurrence @default(NENHUMA)
+  // Aviso por push já enviado (só eventos sem repetição).
+  notifiedAt  DateTime?
+
+  participants User[] @relation("EventParticipants")
+
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  dealId String?
+  deal   Deal?   @relation(fields: [dealId], references: [id], onDelete: SetNull)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([startsAt])
+  @@index([area])
+}
+
+// --- Lembretes ----------------------------------------------------------------
+
+enum ReminderStatus {
+  PENDENTE
+  ENVIADO
+  DISPENSADO
+}
+
+model Reminder {
+  id          String         @id @default(cuid())
+  title       String
+  description String?
+  remindAt    DateTime
+  recurrence  Recurrence     @default(NENHUMA)
+  status      ReminderStatus @default(PENDENTE)
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  contactId String?
+  contact   Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  relatedTaskId String?
+  relatedTask   Task?   @relation(fields: [relatedTaskId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([status, remindAt])
+}
+
+model PushSubscription {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint    String   @unique
+  p256dh      String
+  auth        String
+  deviceLabel String?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+}
+
+// --- Auditoria ----------------------------------------------------------------
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  entityType String
+  entityId   String
+  action     String
+  // "user:<id>" ou "system:<rotina>"
+  actor      String
+  payload    Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+}
+
+// --- Google Agenda (sincronização de prazos, uma via: CRM -> Agenda) ---------
+
+model GoogleCalendarConnection {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken  String
+  refreshToken String
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// --- Funil (Fase 2) ---------------------------------------------------------
+//
+// Dois quadros: JARDIM (funil do João, só equipe interna) e LOJA (pedidos por
+// WhatsApp, visível à equipe da loja). A etapa tem `kind`: ganho e perdido são
+// regras do sistema, não só nomes (renomear a etapa não muda o comportamento).
+
+enum StageKind {
+  ABERTA
+  GANHO
+  PERDIDO
+}
+
+model PipelineStage {
+  id    String    @id @default(cuid())
+  area  Area
+  // Identificador estável usado no código (ex: "proposta"); o nome é livre.
+  key   String
+  name  String
+  order Int
+  kind  StageKind @default(ABERTA)
+  // Cor da bolinha e da borda da coluna (hex). Vazio = cor padrão do tipo.
+  color String?
+
+  deals Deal[]
+  rule  StageRule?
+
+  @@unique([area, key])
+}
+
+// Listas que a equipe edita (motivos de perda, origens do lead, tipos de serviço).
+// Deal guarda a chave (ou o rótulo, no caso de origem) como texto.
+enum ListKind {
+  MOTIVO_PERDA
+  ORIGEM
+  SERVICO
+}
+
+model ListOption {
+  id     String   @id @default(cuid())
+  kind   ListKind
+  key    String
+  label  String
+  order  Int      @default(0)
+  active Boolean  @default(true)
+
+  @@unique([kind, key])
+}
+
+model Deal {
+  id        String        @id @default(cuid())
+  area      Area
+  title     String?
+  contactId String
+  contact   Contact       @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  stageId   String
+  stage     PipelineStage @relation(fields: [stageId], references: [id])
+
+  serviceType  String  @default("CONSTRUCAO")
+  spaceType    String?
+  squareMeters Int?
+  neighborhood String?
+  address      String?
+  // Sinais de qualificação (ver src/lib/qualification.js).
+  hasPhotos    Boolean @default(false)
+  askedQuote   Boolean @default(false)
+  // Valor em centavos (evita Decimal, que não serializa no SvelteKit).
+  valueCents   Int?
+  source       String?
+  notes        String?
+
+  assigneeId String?
+  assignee   User?   @relation("DealAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  nextAction   String?
+  nextActionAt DateTime?
+
+  lostReason String?
+  lostNote   String?
+
+  firstContactAt DateTime?
+  enteredStageAt DateTime  @default(now())
+  closedAt       DateTime?
+  // Ordem dentro da coluna em número decimal: reordenar não reescreve a coluna.
+  order          Float     @default(0)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks        Task[]
+  events       Event[]
+  interactions Interaction[]
+  contracts    MaintenanceContract[]
+  stageLogs    DealStageLog[]
+
+  @@index([stageId])
+  @@index([area])
+  @@index([assigneeId])
+  @@index([contactId])
+}
+
+enum InteractionKind {
+  NOTA
+  LIGACAO
+  VISITA
+  WHATSAPP
+  SISTEMA
+}
+
+// Histórico por contato e, opcionalmente, por negócio. Na Fase 3 as mensagens
+// do WhatsApp também entram aqui.
+model Interaction {
+  id        String          @id @default(cuid())
+  contactId String
+  contact   Contact         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  dealId    String?
+  deal      Deal?           @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  kind      InteractionKind @default(NOTA)
+  body      String
+  authorId  String?
+  author    User?           @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  createdAt DateTime        @default(now())
+
+  @@index([contactId, createdAt])
+  @@index([dealId])
+}
+
+// Regra por etapa. Nasce DESLIGADA: só age em negócios que entram na etapa
+// depois de `activatedAt` (nunca em massa sobre o que já existia).
+model StageRule {
+  id           String        @id @default(cuid())
+  stageId      String        @unique
+  stage        PipelineStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  active       Boolean       @default(false)
+  activatedAt  DateTime?
+  // Dias após a entrada na etapa para criar tarefas de retorno (ex: 1, 3, 7, 14).
+  followUpDays Int[]
+}
+
+// Rotas de atendimento: dia da semana e bairros. Negócio em bairro fora de
+// qualquer rota recebe aviso (só se houver rota cadastrada).
+model ServiceRoute {
+  id            String   @id @default(cuid())
+  name          String
+  weekday       Int?
+  neighborhoods String[]
+}
+
+enum MaintenanceStatus {
+  ATIVO
+  PAUSADO
+  ENCERRADO
+}
+
+// Clube de manutenção: plano mensal de visitas recorrentes.
+model MaintenanceContract {
+  id                String            @id @default(cuid())
+  contactId         String
+  contact           Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  dealId            String?
+  deal              Deal?             @relation(fields: [dealId], references: [id], onDelete: SetNull)
+  monthlyValueCents Int
+  visitIntervalDays Int               @default(30)
+  nextVisitAt       DateTime?
+  status            MaintenanceStatus @default(ATIVO)
+  notes             String?
+  createdAt         DateTime          @default(now())
+}
+
+// --- WhatsApp (Fase 3, provedor uazapi) -------------------------------------
+//
+// Uma instância por número. O token da instância NUNCA fica no banco: só o
+// nome da variável de ambiente que o guarda (tokenEnv).
+
+enum ChannelState {
+  DESCONHECIDO
+  CONECTADO
+  CONECTANDO
+  DESCONECTADO
+}
+
+model WhatsappChannel {
+  id            String       @id @default(cuid())
+  name          String       @unique
+  // Quem enxerga as conversas deste número (LOJA = equipe da loja + interna).
+  area          Area
+  phone         String?
+  provider      String       @default("uazapi")
+  tokenEnv      String
+  state         ChannelState @default(DESCONHECIDO)
+  stateAt       DateTime?
+  lastWebhookAt DateTime?
+  active        Boolean      @default(true)
+
+  conversations   WhatsappConversation[]
+  historyRequests HistoryRequest[]
+  inbox           WhatsappWebhookInbox[]
+}
+
+enum ConversationStatus {
+  ABERTA
+  PENDENTE
+  FECHADA
+}
+
+model WhatsappConversation {
+  id        String             @id @default(cuid())
+  channelId String
+  channel   WhatsappChannel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  contactId String
+  contact   Contact            @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  phone     String
+  area      Area
+  status    ConversationStatus @default(ABERTA)
+
+  assigneeId String?
+  assignee   User?   @relation("ConversationAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  unread           Int       @default(0)
+  lastMessageAt    DateTime  @default(now())
+  lastInboundAt    DateTime?
+  lastOutboundAt   DateTime?
+  // "PARAR": bloqueia qualquer envio a este contato.
+  optOutAt         DateTime?
+  // Aviso de "sem resposta" já enviado para a última mensagem recebida.
+  waitingAlertedAt DateTime?
+  createdAt        DateTime  @default(now())
+
+  messages WhatsappMessage[]
+
+  @@unique([channelId, phone])
+  @@index([area, status])
+  @@index([lastMessageAt])
+}
+
+enum MessageDirection {
+  ENTRADA
+  SAIDA
+}
+
+enum MessageKind {
+  TEXTO
+  MIDIA
+  NOTA
+}
+
+enum MediaState {
+  NENHUMA
+  PENDENTE
+  SALVA
+  FALHOU
+}
+
+enum MessageStatus {
+  RECEBIDA
+  ENVIANDO
+  ENVIADA
+  ENTREGUE
+  LIDA
+  FALHOU
+}
+
+model WhatsappMessage {
+  id             String               @id @default(cuid())
+  conversationId String
+  conversation   WhatsappConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction      MessageDirection
+  // NOTA = anotação interna, nunca enviada ao cliente.
+  kind           MessageKind          @default(TEXTO)
+  body           String?
+  // image | video | audio | ptt | document | sticker | location | contact | other
+  mediaType      String?
+  // Arquivo guardado no Supabase Storage (bucket privado); a uazapi só mantém 2 dias.
+  mediaPath      String?
+  mediaMime      String?
+  mediaName      String?
+  mediaSize      Int?
+  mediaSeconds   Int?
+  mediaState     MediaState           @default(NENHUMA)
+  mediaTries     Int                  @default(0)
+  externalId     String?              @unique
+  status         MessageStatus        @default(RECEBIDA)
+  authorId       String?
+  error          String?
+  sentAt         DateTime             @default(now())
+
+  @@index([conversationId, sentAt])
+  @@index([mediaState, sentAt])
+}
+
+// Evento cru do webhook, gravado antes de processar: se o processamento
+// falhar, o cron reprocessa. Apagado depois de 7 dias.
+model WhatsappWebhookInbox {
+  id          String          @id @default(cuid())
+  channelId   String
+  channel     WhatsappChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  payload     Json
+  attempts    Int             @default(0)
+  error       String?
+  receivedAt  DateTime        @default(now())
+  processedAt DateTime?
+
+  @@index([processedAt, receivedAt])
+}
+
+model QuickReply {
+  id    String @id @default(cuid())
+  area  Area
+  title String
+  // Aceita {nome} (do contato) e {atendente} (de quem envia).
+  body  String
+}
+
+// --- Metas e log de etapas (rodada de 16/11/2026) ----------------------------
+
+enum GoalMetric {
+  LEADS
+  VISITAS
+  PROPOSTAS
+  FECHAMENTOS
+  VALOR_FECHADO
+  RESPOSTA_HORAS
+  PEDIDOS_NOVOS
+  PEDIDOS_ENTREGUES
+}
+
+// Meta mensal. scope = "EQUIPE" ou o id da pessoa. Valor em centavos para dinheiro,
+// em horas para tempo de resposta.
+model Goal {
+  id        String     @id @default(cuid())
+  period    String // "AAAA-MM"
+  area      Area
+  metric    GoalMetric
+  scope     String     @default("EQUIPE")
+  target    Int
+  updatedAt DateTime   @default(now())
+
+  @@unique([period, area, metric, scope])
+}
+
+// Cada entrada de um negócio numa etapa. Guarda a chave e o tipo da etapa na hora,
+// para as metas continuarem certas se a etapa for renomeada ou apagada.
+model DealStageLog {
+  id     String    @id @default(cuid())
+  dealId String
+  deal   Deal      @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  area   Area
+  toKey  String
+  toKind StageKind
+  userId String?
+  at     DateTime  @default(now())
+
+  @@index([area, at])
+  @@index([dealId])
+}
+
+enum HistoryRequestState {
+  PENDENTE
+  ENVIADO
+  FALHOU
+}
+
+// Fila de pedidos de histórico de conversa à uazapi (um por contato e número).
+model HistoryRequest {
+  id          String              @id @default(cuid())
+  channelId   String
+  channel     WhatsappChannel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  contactId   String
+  contact     Contact             @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  state       HistoryRequestState @default(PENDENTE)
+  error       String?
+  requestedAt DateTime?
+  createdAt   DateTime            @default(now())
+
+  @@unique([channelId, contactId])
+  @@index([state])
+}
+
+// Integração que recebe leads de fora (hoje: planilha do Google via Apps Script).
+// A chave secreta só existe em claro na hora de criar; aqui fica o hash SHA-256.
+model LeadIntegration {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  kind           String   @default("SHEETS")
+  secretHash     String
+  active         Boolean  @default(false)
+  stageId        String?
+  // Pessoa em nome de quem os leads são criados (responsável padrão).
+  ownerId        String
+  defaultSource  String?
+  defaultService String?
+  // { campoDoCrm: "Nome da coluna" }; vazio = detecta pelos nomes comuns.
+  mapping        Json     @default("{}")
+  lastEventAt    DateTime?
+  createdAt      DateTime @default(now())
+  intakes        LeadIntake[]
+}
+
+enum LeadIntakeStatus {
+  CRIADO
+  DUPLICADO
+  INVALIDO
+  ERRO
+}
+
+model LeadIntake {
+  id            String           @id @default(cuid())
+  integrationId String
+  integration   LeadIntegration  @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  // número da linha + hash do conteúdo: reenviar a mesma linha nunca duplica
+  dedupeKey     String
+  status        LeadIntakeStatus
+  reason        String?
+  name          String?
+  phone         String?
+  payload       Json?
+  dealId        String?
+  contactId     String?
+  createdAt     DateTime         @default(now())
+
+  @@unique([integrationId, dedupeKey])
+  @@index([integrationId, createdAt])
+}

@@ -1,0 +1,80 @@
+name: Verificar e publicar
+
+# Todo push roda a verificação (testes, lint, build).
+# Push na branch main, com a verificação passando, aplica as migrations no
+# banco de produção e publica em https://crm-paraiso.vercel.app.
+# Segredos usados (Settings > Secrets and variables > Actions):
+#   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID, DIRECT_URL
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: crm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    env:
+      # Valores falsos: só para o build e os testes não reclamarem de variável ausente.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  publicar:
+    needs: verificar
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Trava de segurança: migration nova que apaga dados não sobe sozinha.
+      # Para liberar, o Carlos revisa e inclui [destrutiva-ok] na mensagem do commit.
+      - name: Conferir migrations novas
+        env:
+          ANTES: ${{ github.event.before }}
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if echo "$ANTES" | grep -qE '^0+$'; then exit 0; fi
+          novas=$(git diff --name-only --diff-filter=A "$ANTES" "$GITHUB_SHA" -- 'prisma/migrations/*/migration.sql')
+          [ -z "$novas" ] && exit 0
+          echo "Migrations novas:"; echo "$novas"
+          if echo "$novas" | xargs grep -iEn 'drop[[:space:]]+(table|column|schema)|truncate|delete[[:space:]]+from'; then
+            if echo "$MSG" | grep -q '\[destrutiva-ok\]'; then
+              echo "Migration destrutiva liberada pelo commit."
+            else
+              echo "::error::Migration apaga dados. Fale com o Carlos antes de publicar."
+              exit 1
+            fi
+          fi
+
+      - name: Aplicar migrations no banco de produção
+        env:
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
+        run: npx prisma migrate deploy
+
+      - name: Publicar na Vercel
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: npx vercel@65.16.0 deploy --prod --yes --token="$VERCEL_TOKEN"
