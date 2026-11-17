@@ -22,3 +22,6 @@ vite.config.ts.timestamp-*
 
 /src/generated/prisma
 .env*
+
+# Estado local de ferramentas
+.omc

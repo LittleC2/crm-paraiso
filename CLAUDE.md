@@ -4,23 +4,24 @@ CRM do Paraíso das Plantas (cliente da Athenum). Hoje tem um único usuário, o
 
 ## Como o trabalho chega ao ar
 
-Push na branch `main` publica sozinho em https://crm-paraiso.vercel.app, depois que testes, lint e build passam (`.github/workflows/deploy.yml`). Em seguida o workflow aplica as migrations novas no banco de produção. Isso significa:
+Push na branch `main` publica sozinho: a Vercel faz o build e, em produção, aplica as migrations pendentes antes (`scripts/vercel-build.mjs`). Se a migration ou o build falharem, o site atual continua no ar. O GitHub Actions (`.github/workflows/verificar.yml`) só roda lint, testes e build. Isso significa:
 
 - Rode `npm run lint`, `npm test` e `npm run build` antes de dar push. Se algum falhar, corrija antes de publicar.
-- Para testar algo sem publicar, trabalhe numa branch (`git switch -c minha-ideia`). Branches só rodam a verificação, não publicam. Para publicar, junte na `main`.
+- Para testar algo sem publicar, trabalhe numa branch (`git switch -c minha-ideia`). Branches geram só uma prévia na Vercel e nunca mexem no banco de produção. Para publicar, junte na `main`.
 - Nunca use `git push --force` na `main`.
+- Se uma publicação entrar com defeito: na Vercel, aba Deployments, "Promote to Production" no deploy anterior.
 
 ## Banco de dados
 
-- O banco local de desenvolvimento é separado do de produção. Nunca coloque a `DATABASE_URL` ou a `DIRECT_URL` de produção no `.env` do seu computador. O passo a passo do banco local está em `docs/trabalhar-em-dupla.md`.
+- O banco local de desenvolvimento é separado do de produção. Nunca coloque a `DATABASE_URL` ou a `DIRECT_URL` de produção no `.env` do seu computador. O passo a passo do banco local está em `docs/entrega-para-joao.md`.
 - Mudou o `prisma/schema.prisma`: crie a migration com `npx prisma migrate dev --name descricao-curta`, nunca edite uma migration já criada.
-- Migration só pode adicionar (tabela, coluna opcional, índice). Apagar coluna ou tabela, ou `DELETE`/`TRUNCATE`, é bloqueado pelo workflow e exige o Carlos.
+- Migration só pode adicionar (tabela, coluna opcional, índice). Apagar coluna ou tabela, ou `DELETE`/`TRUNCATE`, não deve ir em migration automática: faça backup do banco e confirme com o dono do CRM antes.
 - Tabela nova precisa de RLS ligado, sem policy (o gatilho da migration `enable_rls` cuida disso). Rode `npm run db:check-rls` e confira.
 
 ## Segredos
 
 - `.env` nunca vai para o Git. Chaves, tokens e senhas nunca aparecem em código, em commit, em log ou em mensagem.
-- Variáveis de produção ficam na Vercel (`vercel env`), não no repositório. Variável nova: adicione o nome em `.env.example` e peça ao Carlos para cadastrar o valor na Vercel.
+- Variáveis de produção ficam na Vercel (`vercel env`), não no repositório. Variável nova: adicione o nome em `.env.example` e cadastre o valor na Vercel (Settings > Environment Variables, Production).
 
 ## Regras do código que o Claude precisa respeitar
 
@@ -35,4 +36,4 @@ Push na branch `main` publica sozinho em https://crm-paraiso.vercel.app, depois 
 
 1. `npm run lint`, `npm test`, `npm run build` passando.
 2. Mexeu em tela: abra no `npm run dev` e veja funcionando, no computador e em largura de celular.
-3. Depois do push, acompanhe a aba Actions do GitHub até o fim do job "publicar" e abra o site para conferir.
+3. Depois do push, acompanhe o deploy na Vercel (aba Deployments) e abra o site para conferir.
