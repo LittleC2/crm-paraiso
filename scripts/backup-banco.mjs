@@ -1,9 +1,11 @@
 // Backup lógico do banco (somente leitura): uma tabela por arquivo JSON.
 // Uso: node scripts/backup-banco.mjs [pasta-de-destino]
 // Lê DIRECT_URL do .env. O destino padrão fica FORA do projeto (dados de clientes).
+// O certificado do servidor é sempre verificado. Se a verificação falhar, baixe o certificado
+// raiz do Supabase (Database > Settings > SSL Configuration) e rode com PG_CA_CERT_PATH=/caminho/cert.crt.
 import 'dotenv/config';
 import pg from 'pg';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -13,7 +15,9 @@ const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
 const dir = process.argv[2] ?? join(homedir(), 'Backups-CRM-Paraiso', stamp);
 mkdirSync(dir, { recursive: true, mode: 0o700 });
 
-const client = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } });
+const ca = process.env.PG_CA_CERT_PATH ? readFileSync(process.env.PG_CA_CERT_PATH, 'utf8') : undefined;
+// sslmode da URL é ignorado de propósito: o objeto ssl abaixo manda e exige certificado válido.
+const client = new pg.Client({ connectionString: url.replace(/[?&]sslmode=[^&]*/, ''), ssl: { rejectUnauthorized: true, ca } });
 await client.connect();
 await client.query('BEGIN READ ONLY ISOLATION LEVEL REPEATABLE READ'); // foto consistente
 const { rows: tables } = await client.query(
