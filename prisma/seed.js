@@ -35,13 +35,16 @@ const admins = [
 		email: required('SEED_JOAO_EMAIL', 'joao@paraiso.local'),
 		name: 'João',
 		password: required('SEED_JOAO_PASSWORD', 'mude-esta-senha-1')
-	},
-	{
+	}
+];
+// Segunda conta administradora: só em desenvolvimento ou se SEED_EDUARDO_EMAIL estiver definida.
+if (!isProd || process.env.SEED_EDUARDO_EMAIL) {
+	admins.push({
 		email: required('SEED_EDUARDO_EMAIL', 'eduardo@paraiso.local'),
 		name: 'Eduardo',
 		password: required('SEED_EDUARDO_PASSWORD', 'mude-esta-senha-2')
-	}
-];
+	});
+}
 
 for (const admin of admins) {
 	const passwordHash = await hashPassword(admin.password);

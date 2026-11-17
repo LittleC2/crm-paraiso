@@ -13,7 +13,7 @@ Push na branch `main` publica sozinho: a Vercel faz o build e, em produção, ap
 
 ## Banco de dados
 
-- O banco local de desenvolvimento é separado do de produção. Nunca coloque a `DATABASE_URL` ou a `DIRECT_URL` de produção no `.env` do seu computador. O passo a passo do banco local está em `docs/entrega-para-joao.md`.
+- O banco local de desenvolvimento é separado do de produção. Nunca coloque a `DATABASE_URL` ou a `DIRECT_URL` de produção no `.env` do seu computador. O passo a passo do banco local está em `COMECE-AQUI.md`.
 - Mudou o `prisma/schema.prisma`: crie a migration com `npx prisma migrate dev --name descricao-curta`, nunca edite uma migration já criada.
 - Migration só pode adicionar (tabela, coluna opcional, índice). Apagar coluna ou tabela, ou `DELETE`/`TRUNCATE`, não deve ir em migration automática: faça backup do banco e confirme com o dono do CRM antes.
 - Tabela nova precisa de RLS ligado, sem policy (o gatilho da migration `enable_rls` cuida disso). Rode `npm run db:check-rls` e confira.
