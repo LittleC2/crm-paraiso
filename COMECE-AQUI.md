@@ -46,6 +46,8 @@ O segundo comando cria um Postgres local e imprime uma conexão `postgres://...`
    | `CRON_SECRET` | texto longo e aleatório (`openssl rand -hex 32`) |
    | `SEED_JOAO_EMAIL`, `SEED_JOAO_PASSWORD` | seu login no CRM |
 
+   Os segredos novos (`CRON_SECRET` e os de WhatsApp e push) saem de `node scripts/gerar-chaves.mjs`: copie o resultado para a Vercel, sem gravar em arquivo do projeto.
+
 4. Publique: `npx vercel deploy --prod`. O build roda `scripts/vercel-build.mjs`, que aplica as migrations no seu banco antes de compilar. Se algo falhar, o build para e nada é trocado.
 5. Crie a sua conta de login uma única vez, no seu terminal, informando as variáveis na própria linha (sem gravar no `.env`):
 
@@ -78,3 +80,7 @@ Peça ao Claude. Os pontos principais:
 - As regras estão no `CLAUDE.md`, que o Claude lê sozinho: rodar `npm run lint`, `npm test` e `npm run build` antes de publicar, migration só adiciona, nenhuma chave no código.
 - Build ou migration com erro não troca o site no ar. Se uma publicação sair com defeito, na Vercel, aba Deployments, use "Promote to Production" no deploy anterior.
 - Antes de qualquer mudança grande no banco, faça backup: `node scripts/backup-banco.mjs` (precisa do certificado raiz do Supabase em `PG_CA_CERT_PATH`; instruções no topo do script).
+
+## Se você recebeu o arquivo `chaves.env.enc`
+
+Ele guarda só as conexões do banco já existente do CRM original (`DATABASE_URL` e `DIRECT_URL`), para continuar com os mesmos dados em vez de um banco novo. A senha vem separada, por outro canal. Para abrir: `openssl enc -d -aes-256-cbc -pbkdf2 -in chaves.env.enc -out .env.producao`. Esse arquivo é só para copiar os dois valores para a Vercel: nunca renomeie para `.env`, nunca rode o CRM local contra ele e nunca suba para o Git (já está no `.gitignore`). Apontar duas instalações para o mesmo banco funciona, mas elas passam a compartilhar contatos e conversas.
